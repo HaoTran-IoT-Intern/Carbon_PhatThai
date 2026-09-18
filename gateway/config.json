@@ -1,0 +1,31 @@
+{
+  "config_id": "cfg_cement_stack_v1",
+  "version": "1.2.3",
+  "gateway_id": "gw_ha_tien_01",
+  "api_endpoint": "http://127.0.0.1:5001/api/v1/cems/telemetry/batch",
+  "api_key": "cems_gw_secret_key_prod_xxxxxxxxx",
+  "standard_conditions": {
+    "temperature_k": 273.15,
+    "pressure_kpa": 101.325,
+    "moisture_handling": "unmodified_same_basis_wet"
+  },
+  "flue_gas_sensors": {
+    "flow_is_pre_standardized": false,
+    "pressure_type": "gauge_kpa",
+    "pressure_gauge_valid_range_kpa": [-50.0, 50.0],
+    "barometric_pressure_kpa_default": 101.325,
+    "pressure_standardization_source": "assumed_barometric_101.325kpa"
+  },
+  "slot_assignment": {
+    "slot_duration_seconds": 10,
+    "slots_per_minute": 6
+  },
+  "operational_stacks": [
+    {
+      "stack_id": "stack_lo_nung_01",
+      "device_id": "cems_node_01",
+      "is_active": true,
+      "active_from": "2026-08-01T00:00:00.000Z"
+    }
+  ]
+}
