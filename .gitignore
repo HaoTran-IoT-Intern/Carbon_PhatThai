@@ -1,0 +1,24 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.pytest_cache/
+
+# Databases
+*.db
+*.sqlite3
+
+# Logs
+*.log
+/var/log/
+
+# Superpowers & Worktrees
+.worktrees/
+worktrees/
+.superpowers/
+
+# Environments
+.venv/
+env/
+venv/
+ENV/
