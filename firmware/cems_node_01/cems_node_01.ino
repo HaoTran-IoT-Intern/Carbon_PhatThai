@@ -1,7 +1,8 @@
 /*
- * ESP32 CEMS Node - Hướng 1 (Bên phát thải) - v2
- * 6 khí+bụi, 3 vật lý (DHT11 temp + humidity, flow, pressure), QA/QC mock
- * LCD 16x2 I2C, Buzzer alert, Buffer store-and-forward
+ * ESP32 CEMS Node - Hướng 1 (Bên phát thải) - v2.1
+ * 6 khí+bụi, 3 vật lý (DHT11 temp + humidity, flow, flue_pressure_gauge_kpa), QA/QC mock
+ * LCD 16x2 I2C, Buzzer alert, Buffer store-and-forward (20 samples ~200s limit)
+ * Local Mosquitto Broker with authentication & Buffer full Red LED indicator
  */
 
 #include <WiFi.h>
@@ -17,6 +18,7 @@
 DHT dht(DHTPIN, DHTTYPE);
 
 #define BUZZER_PIN 18
+#define LED_BUFFER_FULL_PIN 23
 
 // I2C pins for ESP32-S3 (Default: SDA=GPIO8, SCL=GPIO9 hoặc SDA=GPIO21, SCL=GPIO20)
 #define I2C_SDA 8
@@ -33,9 +35,11 @@ const char* WIFI_SSID = "pioneglobal.com";
 const char* WIFI_PASS = "pioneglobal.com_3F";
 const unsigned long WIFI_TIMEOUT_MS = 15000;
 
-// MQTT
-const char* MQTT_HOST = "broker.hivemq.com";
+// MQTT Broker Configuration (Local Edge Gateway Mosquitto)
+const char* MQTT_HOST = "192.168.1.100";  // Local Edge Gateway IP
 const uint16_t MQTT_PORT = 1883;
+const char* MQTT_USER = "cems_node";       // Local Mosquitto Auth User
+const char* MQTT_PASS = "cems_secret_pass"; // Local Mosquitto Auth Password
 const char* MQTT_TOPIC = "pione/carbon/v1/cems_node_01/data";
 
 // Node info
@@ -44,7 +48,7 @@ const float LAT = 21.0278;
 const float LON = 105.8342;
 
 // LED
-const int LED_PIN = 2;
+const int LED_PIN = 2; // Normal status LED
 
 // Timing
 const unsigned long PUBLISH_INTERVAL_MS = 10000;
@@ -67,7 +71,7 @@ float o2_history[WINDOW_SIZE];
 float pm_history[WINDOW_SIZE];
 float flow_history[WINDOW_SIZE];
 float temp_history[WINDOW_SIZE];
-float pressure_history[WINDOW_SIZE];
+float flue_pressure_gauge_history[WINDOW_SIZE];
 float humidity_history[WINDOW_SIZE];
 int sample_index = 0;
 
@@ -91,7 +95,7 @@ struct SensorData {
   // Vật lý
   float flow_m3h;
   float temp_c;
-  float pressure_atm;
+  float flue_pressure_gauge_kpa;
   float humidity_pct;
   // RATA metadata
   const char* last_rata_date;
@@ -109,7 +113,9 @@ float mock_temp() {
   return 150.0 + random(-150, 151) / 10.0;
 }
 float mock_pressure() {
-  return 1.2 + random(-5, 6) / 100.0;
+  // Industrial flue gas gauge pressure in kPa (standard range -50.0 to 50.0 kPa)
+  // Default simulated around 0.5 to 2.5 kPa
+  return 1.5 + (random(-100, 101) / 100.0); // ~0.50 to 2.51 kPa
 }
 float mock_so2() {
   return 85.0 + random(-150, 151) / 10.0;  // ppm, dao động vừa
@@ -130,10 +136,8 @@ float mock_zero_drift() {
   return random(-15, 16) / 10.0;           // % drift quanh 0
 }
 float mock_span_drift() {
- // return random(-15, 16) / 10.0;           // % drift quanh 0
- return 3.0;
+  return 3.0;
 }
-
 
 // ===== DHT11 Real Sensor Reading =====
 float read_ambient_temp() {
@@ -165,7 +169,7 @@ void fill_history() {
     pm_history[i] = mock_pm();
     flow_history[i] = mock_flow();
     temp_history[i] = 28.0;       // Nhiệt độ phòng khởi tạo hợp lý
-    pressure_history[i] = mock_pressure();
+    flue_pressure_gauge_history[i] = mock_pressure();
     humidity_history[i] = 60.0;   // Độ ẩm phòng khởi tạo hợp lý
   }
   sample_index = 0;
@@ -183,6 +187,10 @@ SensorData get_filtered_data() {
   float raw_humidity = read_ambient_humidity();
   float raw_press = mock_pressure();
 
+  // Clamp raw pressure to valid physical gauge range [-50.0, 50.0] kPa
+  if (raw_press < -50.0) raw_press = -50.0;
+  if (raw_press > 50.0) raw_press = 50.0;
+
   co2_history[sample_index] = raw_co2;
   so2_history[sample_index] = raw_so2;
   nox_history[sample_index] = raw_nox;
@@ -199,14 +207,14 @@ SensorData get_filtered_data() {
     humidity_history[sample_index] = raw_humidity;
   }
 
-  pressure_history[sample_index] = raw_press;
+  flue_pressure_gauge_history[sample_index] = raw_press;
   sample_index = (sample_index + 1) % WINDOW_SIZE;
 
   SensorData avg;
   avg.co2_pct = 0; avg.so2_ppm = 0; avg.nox_ppm = 0;
   avg.co_ppm = 0; avg.o2_pct = 0;
   avg.pm_mgm3 = 0;
-  avg.flow_m3h = 0; avg.temp_c = 0; avg.pressure_atm = 0; avg.humidity_pct = 0;
+  avg.flow_m3h = 0; avg.temp_c = 0; avg.flue_pressure_gauge_kpa = 0; avg.humidity_pct = 0;
   
   for (int i = 0; i < WINDOW_SIZE; i++) {
     avg.co2_pct += co2_history[i];
@@ -217,7 +225,7 @@ SensorData get_filtered_data() {
     avg.pm_mgm3 += pm_history[i];
     avg.flow_m3h += flow_history[i];
     avg.temp_c += temp_history[i];
-    avg.pressure_atm += pressure_history[i];
+    avg.flue_pressure_gauge_kpa += flue_pressure_gauge_history[i];
     avg.humidity_pct += humidity_history[i];
   }
   avg.co2_pct /= WINDOW_SIZE;
@@ -228,7 +236,7 @@ SensorData get_filtered_data() {
   avg.pm_mgm3 /= WINDOW_SIZE;
   avg.flow_m3h /= WINDOW_SIZE;
   avg.temp_c /= WINDOW_SIZE;
-  avg.pressure_atm /= WINDOW_SIZE;
+  avg.flue_pressure_gauge_kpa /= WINDOW_SIZE;
   avg.humidity_pct /= WINDOW_SIZE;
 
   // QA/QC
@@ -243,18 +251,59 @@ SensorData get_filtered_data() {
   return avg;
 }
 
+// ===== Buzzer Alert Functions =====
+void alert_qaqc_out_of_control() {
+  digitalWrite(BUZZER_PIN, HIGH);
+  delay(500);
+  digitalWrite(BUZZER_PIN, LOW);
+  delay(200);
+  digitalWrite(BUZZER_PIN, HIGH);
+  delay(500);
+  digitalWrite(BUZZER_PIN, LOW);
+}
+
+void alert_mqtt_disconnected() {
+  Serial.println("[ALERT] MQTT disconnected/freeze! Buzzer canh bao dinh ky...");
+  digitalWrite(BUZZER_PIN, HIGH);
+  delay(100);
+  digitalWrite(BUZZER_PIN, LOW);
+}
+
+void alert_buffer_full() {
+  Serial.println("[ALERT] Buffer TRAN BO DEM (20/20 mau, ~200s)! Buzzer bao dong don dap...");
+  for (int i = 0; i < 3; i++) {
+    digitalWrite(BUZZER_PIN, HIGH);
+    delay(80);
+    digitalWrite(BUZZER_PIN, LOW);
+    delay(80);
+  }
+}
+
 // ===== Buffer Store-and-Forward =====
 bool store_payload(const char* payload) {
   if (buffer_count >= BUFFER_SIZE) {
-    Serial.println("[WARN] Buffer FULL, dropping");
+    // Tràn bộ đệm: bật LED đỏ cảnh báo
+    digitalWrite(LED_BUFFER_FULL_PIN, HIGH);
+    // Kích hoạt còi báo động dồn dập
+    alert_buffer_full();
+    // Drop mẫu mới nhất có log tường minh (thừa nhận trung thực giới hạn lưu đệm 200s)
+    Serial.println("[WARN] Buffer FULL (20/20 samples, ~200s limit reached). Dropping newest sample!");
     return false;
   }
   strncpy(payload_buffer[buffer_tail], payload, MAX_PAYLOAD_LEN - 1);
   payload_buffer[buffer_tail][MAX_PAYLOAD_LEN - 1] = '\0';
   buffer_tail = (buffer_tail + 1) % BUFFER_SIZE;
   buffer_count++;
-  Serial.print("[BUFFER] Stored, count=");
-  Serial.println(buffer_count);
+  Serial.print("[BUFFER] Stored sample, count=");
+  Serial.print(buffer_count);
+  Serial.print("/");
+  Serial.println(BUFFER_SIZE);
+
+  if (buffer_count >= BUFFER_SIZE) {
+    digitalWrite(LED_BUFFER_FULL_PIN, HIGH);
+    alert_buffer_full();
+    Serial.println("[WARN] Buffer is now FULL (20/20 samples, ~200s capacity reached). LED_BUFFER_FULL ON.");
+  }
   return true;
 }
 
@@ -306,17 +355,6 @@ void update_lcd(const SensorData& data) {
   }
 }
 
-// ===== Buzzer Alert =====
-void alert_qaqc_out_of_control() {
-  digitalWrite(BUZZER_PIN, HIGH);
-  delay(500);
-  digitalWrite(BUZZER_PIN, LOW);
-  delay(200);
-  digitalWrite(BUZZER_PIN, HIGH);
-  delay(500);
-  digitalWrite(BUZZER_PIN, LOW);
-}
-
 // ===== Publish =====
 void publish_new_data() {
   SensorData data = get_filtered_data();
@@ -343,7 +381,7 @@ void publish_new_data() {
     "\"pm_mgm3\":%.2f,"
     "\"flow_m3h\":%.2f,"
     "\"temp_c\":%.2f,"
-    "\"pressure_atm\":%.2f,"
+    "\"flue_pressure_gauge_kpa\":%.2f,"
     "\"humidity_pct\":%.2f,"
     "\"zero_drift_pct\":%.2f,"
     "\"span_drift_pct\":%.2f,"
@@ -362,7 +400,7 @@ void publish_new_data() {
     data.pm_mgm3,
     data.flow_m3h,
     data.temp_c,
-    data.pressure_atm,
+    data.flue_pressure_gauge_kpa,
     data.humidity_pct,
     data.zero_drift_pct,
     data.span_drift_pct,
@@ -371,9 +409,26 @@ void publish_new_data() {
     data.rata_accuracy_pct
   );
 
-  store_payload(payload);
-  if (mqtt.connected()) {
-    send_from_buffer();
+  bool is_connected = !simulated_outage && mqtt.connected();
+
+  if (!is_connected) {
+    // Khi MQTT disconnected / freeze:
+    // Cảnh báo Buzzer định kỳ nếu bộ đệm chưa đầy
+    if (buffer_count < BUFFER_SIZE) {
+      alert_mqtt_disconnected();
+    }
+    // Lưu vào bộ đệm RAM (tự động bật LED_BUFFER_FULL_PIN & còi dồn dập nếu buffer đầy)
+    store_payload(payload);
+  } else {
+    // Khi MQTT đang kết nối bình thường:
+    store_payload(payload);
+    while (buffer_count > 0) {
+      if (!send_from_buffer()) break;
+      delay(20);
+    }
+    if (buffer_count == 0) {
+      digitalWrite(LED_BUFFER_FULL_PIN, LOW);
+    }
   }
 }
 
@@ -408,8 +463,18 @@ bool connect_wifi() {
 bool connect_mqtt() {
   if (mqtt.connected()) return true;
   String client_id = String(DEVICE_ID) + "-" + String(random(1000, 9999));
-  Serial.print("[MQTT] Connecting...");
-  if (mqtt.connect(client_id.c_str())) {
+  Serial.print("[MQTT] Connecting to local broker (");
+  Serial.print(MQTT_HOST);
+  Serial.print(")...");
+
+  bool ok = false;
+  if (strlen(MQTT_USER) > 0) {
+    ok = mqtt.connect(client_id.c_str(), MQTT_USER, MQTT_PASS);
+  } else {
+    ok = mqtt.connect(client_id.c_str());
+  }
+
+  if (ok) {
     Serial.println(" OK");
     return true;
   }
@@ -421,12 +486,14 @@ bool connect_mqtt() {
 // ===== SETUP =====
 void setup() {
   Serial.begin(115200);
-  Serial.println("\n[BOOT] CEMS Node v2 - Sensors + LCD + DHT11");
+  Serial.println("\n[BOOT] CEMS Node v2.1 - Sensors + LCD + DHT11");
 
   pinMode(LED_PIN, OUTPUT);
+  pinMode(LED_BUFFER_FULL_PIN, OUTPUT);
   pinMode(BUZZER_PIN, OUTPUT);
   digitalWrite(BUZZER_PIN, LOW);
   digitalWrite(LED_PIN, LOW);
+  digitalWrite(LED_BUFFER_FULL_PIN, LOW);
 
   // Test bíp 1 tiếng ngắn khi khởi động để xác nhận còi hoạt động
   digitalWrite(BUZZER_PIN, HIGH);
@@ -439,7 +506,7 @@ void setup() {
   // Khởi động cảm biến DHT11
   dht.begin();
   
-  // Khởi động I2C và màn hình LCD (SDA=GPIO21, SCL=GPIO22)
+  // Khởi động I2C và màn hình LCD (SDA=GPIO8, SCL=GPIO9)
   Wire.begin(I2C_SDA, I2C_SCL);
   lcd.init();
   lcd.backlight();
@@ -467,9 +534,10 @@ void setup() {
   }
 
   Serial.println("\n================================================");
-  Serial.println(" CEMS NODE v2 READY");
+  Serial.println(" CEMS NODE v2.1 READY");
   Serial.println(" 9 sensors + DHT11 + LCD 16x2 + QA/QC Alert");
-  Serial.println(" Buffer store-and-forward enabled");
+  Serial.println(" Local Mosquitto Broker + Buffer Overflow Red LED");
+  Serial.println(" Flue Pressure Gauge kPa (-50 to +50 kPa)");
   Serial.println("================================================\n");
 }
 
@@ -489,10 +557,10 @@ void loop() {
   if (last_boot_state == HIGH && current_boot_state == LOW) {
     simulated_outage = !simulated_outage;
     if (simulated_outage) {
-      Serial.println("\n[SIMULATION] >>> OUTAGE ENABLED <<<");
+      Serial.println("\n[SIMULATION] >>> OUTAGE ENABLED (MQTT DISCONNECTED) <<<");
       mqtt.disconnect();
     } else {
-      Serial.println("\n[SIMULATION] >>> OUTAGE DISABLED <<<");
+      Serial.println("\n[SIMULATION] >>> OUTAGE DISABLED (RECOVERING) <<<");
     }
     delay(200);
   }
@@ -509,10 +577,17 @@ void loop() {
         publish_new_data();
       } else {
         if (connect_mqtt()) {
-          Serial.println("[BUFFER] Reconnected! Flushing buffer...");
+          Serial.println("[MQTT] Reconnected! Flushing buffer cleanly...");
           while (buffer_count > 0) {
-            if (!send_from_buffer()) break;
-            delay(100);
+            if (!send_from_buffer()) {
+              Serial.println("[BUFFER] Flush interrupted by MQTT publish failure.");
+              break;
+            }
+            delay(50);
+          }
+          if (buffer_count == 0) {
+            Serial.println("[BUFFER] Buffer fully flushed. Turning off Red LED and stopping alert.");
+            digitalWrite(LED_BUFFER_FULL_PIN, LOW);
           }
           publish_new_data();
         } else {
