@@ -267,3 +267,21 @@ def test_lateness_levels(db_conn):
     assert rows[51] == (0, 0)
     assert rows[52] == (1, 0)
     assert rows[53] == (2, 1)
+
+def test_sample_ts_with_non_utc_timezone_normalized_to_utc(db_conn):
+    config = {"config_id": "cfg_test"}
+    # 17:00:15+07:00 corresponds to 10:00:15Z
+    sample = {
+        "device_id": "node_01", "boot_id": "b1", "sample_seq": 60,
+        "stack_id": "stack_01", "measurement_config_id": "cfg_test",
+        "sample_ts": "2026-09-18T17:00:15.000+07:00", "time_quality": "ntp_synced",
+        "arrived_at": "2026-09-18T10:00:20.000Z", "raw_payload_text": "p60"
+    }
+    res = ingest_raw_sample(db_conn, sample, config)
+    assert res["status"] == "accepted"
+
+    cur = db_conn.cursor()
+    cur.execute("SELECT minute_window_ts, slot_index FROM raw_samples WHERE sample_seq = 60")
+    row = cur.fetchone()
+    assert row["minute_window_ts"] == "2026-09-18T10:00:00.000Z"
+    assert row["slot_index"] == 1

@@ -1,10 +1,13 @@
 # gateway/dispatcher.py
 import json
+import logging
 import time
 import random
 from datetime import datetime, timezone, timedelta
 from email.utils import parsedate_to_datetime
 from gateway.models import db_transaction
+
+logger = logging.getLogger(__name__)
 
 def get_iso_now():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
@@ -100,7 +103,20 @@ def dispatch_single_batch(conn, http_client, config, pacing_seconds=1.0):
         return {"status": "idle"}
         
     batch = dict(batch)
-    readings = json.loads(batch["payload_json"]).get("readings", [])
+    try:
+        readings = json.loads(batch["payload_json"]).get("readings", [])
+    except Exception as e:
+        logger.critical(f"Corrupt payload_json for batch {batch['batch_id']}: {e}")
+        with db_transaction(conn):
+            cur.execute(
+                "UPDATE batches SET status = 'quarantined', last_error_message = ? WHERE batch_id = ?",
+                (f"CORRUPT_PAYLOAD_JSON: {str(e)}"[:255], batch["batch_id"]),
+            )
+            cur.execute(
+                "UPDATE minute_readings SET status = 'quarantined' WHERE batch_id = ?",
+                (batch["batch_id"],),
+            )
+        return {"status": "quarantined"}
     
     # 5. Send HTTP request
     try:

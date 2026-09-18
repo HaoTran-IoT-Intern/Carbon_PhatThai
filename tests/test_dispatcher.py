@@ -352,3 +352,33 @@ def test_validate_ack_edge_cases():
     # Count mismatch
     assert validate_ack(batch, {**valid_resp, "processed_count": 2}, 3) is False
     assert validate_ack(batch, {**valid_resp, "inserted_count": 1, "duplicated_count": 1}, 3) is False
+
+def test_dispatcher_corrupt_payload_json_quarantined(setup_gateway):
+    conn, config = setup_gateway
+    mock_http = MagicMock()
+    
+    cur = conn.cursor()
+    cur.execute("SELECT batch_id FROM batches LIMIT 1")
+    b_id = cur.fetchone()[0]
+    
+    # Intentionally corrupt payload_json in database
+    cur.execute("UPDATE batches SET payload_json = 'INVALID_JSON{{' WHERE batch_id = ?", (b_id,))
+    
+    res = dispatch_single_batch(conn, mock_http, config, pacing_seconds=0)
+    assert res["status"] == "quarantined"
+    
+    # HTTP should NOT have been called
+    mock_http.post.assert_not_called()
+    
+    # Verify batch status and last_error_message
+    cur.execute("SELECT status, last_error_message FROM batches WHERE batch_id = ?", (b_id,))
+    batch_row = cur.fetchone()
+    assert batch_row["status"] == "quarantined"
+    assert "CORRUPT_PAYLOAD_JSON" in batch_row["last_error_message"]
+    
+    # Verify minute_readings status
+    cur.execute("SELECT status FROM minute_readings WHERE batch_id = ?", (b_id,))
+    readings = cur.fetchall()
+    assert len(readings) > 0
+    for r in readings:
+        assert r["status"] == "quarantined"

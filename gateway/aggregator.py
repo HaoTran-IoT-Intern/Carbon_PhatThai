@@ -172,6 +172,7 @@ def startup_gap_backfill(conn, config, current_time_dt=None):
                 logging.warning(f"[GAP_BACKFILL] Gap vượt quá 24h ({start_dt} -> {effective_end_dt}). Giới hạn bù đắp 24h.")
                 start_dt = max_backfill_dt
                 
+            start_dt = start_dt.replace(second=0, microsecond=0)
             cutoff_dt = effective_end_dt - timedelta(seconds=120)
             
             curr_dt = start_dt

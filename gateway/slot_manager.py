@@ -83,6 +83,7 @@ def ingest_raw_sample(conn, raw_data, config=None):
                     dt_sample = datetime.fromisoformat(sample_ts_str.replace("Z", "+00:00"))
                     if dt_sample.tzinfo is None:
                         dt_sample = dt_sample.replace(tzinfo=timezone.utc)
+                    dt_sample = dt_sample.astimezone(timezone.utc)
             except Exception:
                 is_invalid_time = True
                 
@@ -106,6 +107,7 @@ def ingest_raw_sample(conn, raw_data, config=None):
         arrived_dt = datetime.fromisoformat(arrived_at_str.replace("Z", "+00:00"))
         if arrived_dt.tzinfo is None:
             arrived_dt = arrived_dt.replace(tzinfo=timezone.utc)
+        arrived_dt = arrived_dt.astimezone(timezone.utc)
         
         # 4. Kiểm tra trạng thái đóng băng của phút
         cur.execute("SELECT id, status FROM minute_readings WHERE stack_id = ? AND minute_ts = ?",

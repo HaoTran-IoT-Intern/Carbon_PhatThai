@@ -107,3 +107,11 @@ def test_db_transaction_commit_and_rollback(tmp_path):
     cur.execute("SELECT value FROM gateway_system_state WHERE key='k2'")
     assert cur.fetchone() is None
     conn.close()
+
+def test_get_db_connection_creates_parent_dir(tmp_path):
+    nested_dir = tmp_path / "subdir" / "deep_dir"
+    db_path = str(nested_dir / "test_nested.db")
+    assert not nested_dir.exists()
+    conn = get_db_connection(db_path)
+    assert nested_dir.exists()
+    conn.close()

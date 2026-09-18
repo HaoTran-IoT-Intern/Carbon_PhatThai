@@ -11,11 +11,15 @@ def _parse_json_field(val, default):
     if val is None:
         return default
     if isinstance(val, (dict, list)):
-        return val
-    try:
-        return json.loads(val)
-    except Exception:
+        parsed = val
+    else:
+        try:
+            parsed = json.loads(val)
+        except Exception:
+            return default
+    if not isinstance(parsed, type(default)):
         return default
+    return parsed
 
 def build_canonical_json_payload(batch_id, gateway_id, batch_created_at, rows):
     readings = []

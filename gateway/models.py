@@ -1,4 +1,5 @@
 # gateway/models.py
+import os
 import sqlite3
 import json
 from contextlib import contextmanager
@@ -8,6 +9,9 @@ def load_config(config_path="gateway/config.json"):
         return json.load(f)
 
 def get_db_connection(db_path="gateway/cems_data.db"):
+    dir_name = os.path.dirname(os.path.abspath(db_path))
+    if dir_name:
+        os.makedirs(dir_name, exist_ok=True)
     conn = sqlite3.connect(db_path, timeout=30.0)
     conn.isolation_level = None
     conn.row_factory = sqlite3.Row

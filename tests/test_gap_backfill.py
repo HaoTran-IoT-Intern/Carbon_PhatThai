@@ -160,3 +160,30 @@ def test_startup_gap_backfill_active_until(tmp_path):
     assert min_ts == "2026-09-18T10:00:00.000Z"
     assert max_ts == "2026-09-18T11:00:00.000Z"
     conn.close()
+
+def test_startup_gap_backfill_clears_seconds_and_microseconds(tmp_path):
+    db_path = str(tmp_path / "test_cems_subsecond.db")
+    init_db(db_path)
+    conn = get_db_connection(db_path)
+    
+    config = {
+        "config_id": "cfg_test",
+        "operational_stacks": [
+            {
+                "stack_id": "stack_01",
+                "device_id": "node_01",
+                "is_active": True,
+                "active_from": "2026-09-18T11:55:34.567Z"
+            }
+        ]
+    }
+    mock_now_dt = datetime.fromisoformat("2026-09-18T12:02:45.123+00:00")
+    inserted = startup_gap_backfill(conn, config, current_time_dt=mock_now_dt)
+    assert inserted == 6
+    
+    cur = conn.cursor()
+    cur.execute("SELECT minute_ts FROM minute_readings ORDER BY minute_ts")
+    rows = [r[0] for r in cur.fetchall()]
+    assert rows[0] == "2026-09-18T11:55:00.000Z"
+    assert rows[-1] == "2026-09-18T12:00:00.000Z"
+    conn.close()

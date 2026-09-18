@@ -29,6 +29,8 @@ def check_disk_watermark(path="."):
     - OK: mức an toàn
     """
     total, used, free = shutil.disk_usage(path)
+    if total <= 0:
+        return "CRITICAL"
     percent_free = (free / total) * 100
     if percent_free < 5.0 or free < (200 * 1024 * 1024):
         return "CRITICAL"

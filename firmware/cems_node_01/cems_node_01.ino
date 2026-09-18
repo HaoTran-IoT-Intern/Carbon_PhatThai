@@ -322,6 +322,22 @@ bool send_from_buffer() {
   return false;
 }
 
+void flush_buffer(unsigned long delay_ms) {
+  while (buffer_count > 0) {
+    if (!send_from_buffer()) {
+      Serial.println("[BUFFER] Flush interrupted by MQTT publish failure.");
+      break;
+    }
+    if (delay_ms > 0) {
+      delay(delay_ms);
+    }
+  }
+  if (buffer_count == 0) {
+    Serial.println("[BUFFER] Buffer fully flushed. Turning off Red LED and stopping alert.");
+    digitalWrite(LED_BUFFER_FULL_PIN, LOW);
+  }
+}
+
 // ===== Timestamp =====
 String iso_timestamp() {
   time_t now = time(nullptr);
@@ -422,13 +438,7 @@ void publish_new_data() {
   } else {
     // Khi MQTT đang kết nối bình thường:
     store_payload(payload);
-    while (buffer_count > 0) {
-      if (!send_from_buffer()) break;
-      delay(20);
-    }
-    if (buffer_count == 0) {
-      digitalWrite(LED_BUFFER_FULL_PIN, LOW);
-    }
+    flush_buffer(20);
   }
 }
 
@@ -578,17 +588,7 @@ void loop() {
       } else {
         if (connect_mqtt()) {
           Serial.println("[MQTT] Reconnected! Flushing buffer cleanly...");
-          while (buffer_count > 0) {
-            if (!send_from_buffer()) {
-              Serial.println("[BUFFER] Flush interrupted by MQTT publish failure.");
-              break;
-            }
-            delay(50);
-          }
-          if (buffer_count == 0) {
-            Serial.println("[BUFFER] Buffer fully flushed. Turning off Red LED and stopping alert.");
-            digitalWrite(LED_BUFFER_FULL_PIN, LOW);
-          }
+          flush_buffer(50);
           publish_new_data();
         } else {
           publish_new_data();

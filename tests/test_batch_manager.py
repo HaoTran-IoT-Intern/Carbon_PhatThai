@@ -244,3 +244,30 @@ def test_freeze_and_create_batch_atomic_rollback(tmp_path, monkeypatch):
     assert cur.fetchone()["status"] == "draft"
 
     conn.close()
+
+def test_parse_json_field_type_safety():
+    from gateway.batch_manager import _parse_json_field
+    
+    # Valid dict
+    assert _parse_json_field('{"a": 1}', {}) == {"a": 1}
+    
+    # Valid list
+    assert _parse_json_field('[1, 2, 3]', []) == [1, 2, 3]
+    
+    # None returns default
+    assert _parse_json_field(None, {"default": True}) == {"default": True}
+    
+    # Invalid json returns default
+    assert _parse_json_field('{invalid', {"default": True}) == {"default": True}
+    
+    # Type mismatch: integer when default is dict
+    assert _parse_json_field('123', {}) == {}
+    
+    # Type mismatch: list when default is dict
+    assert _parse_json_field('[1, 2]', {}) == {}
+    
+    # Type mismatch: string when default is dict
+    assert _parse_json_field('"string_val"', {}) == {}
+    
+    # Object already passed in with mismatch
+    assert _parse_json_field([1, 2, 3], {}) == {}

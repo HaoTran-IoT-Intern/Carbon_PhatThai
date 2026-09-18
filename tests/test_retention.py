@@ -169,3 +169,9 @@ def test_check_disk_watermark():
     # 5. Free pct is 6% (>5%) but absolute free is 150MB (<200MB) -> CRITICAL
     with patch("shutil.disk_usage", return_value=(2 * 1024**3, 1850 * 1024 * 1024, 150 * 1024 * 1024)):
         assert check_disk_watermark(".") == "CRITICAL"
+
+    # 6. Total is 0 (or negative) -> CRITICAL
+    with patch("shutil.disk_usage", return_value=(0, 0, 0)):
+        assert check_disk_watermark(".") == "CRITICAL"
+    with patch("shutil.disk_usage", return_value=(-10, 0, 0)):
+        assert check_disk_watermark(".") == "CRITICAL"
