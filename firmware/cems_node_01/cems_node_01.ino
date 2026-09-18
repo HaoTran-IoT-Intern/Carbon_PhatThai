@@ -21,11 +21,12 @@ DHT dht(DHTPIN, DHTTYPE);
 #define BUZZER_PIN 18
 #define LED_BUFFER_FULL_PIN 23
 
-// I2C pins for ESP32-S3 (Default: SDA=GPIO8, SCL=GPIO9 hoặc SDA=GPIO21, SCL=GPIO20)
-#define I2C_SDA 8
-#define I2C_SCL 9
+// I2C pins for standard ESP32 WROOM-32 (Default: SDA=GPIO21, SCL=GPIO22)
+#define I2C_SDA 21
+#define I2C_SCL 22
 
 LiquidCrystal_I2C lcd(0x27, 16, 2);
+bool lcd_found = false;
 
 #define WINDOW_SIZE 5
 #define BUFFER_SIZE 20
@@ -408,6 +409,7 @@ String iso_timestamp(String& time_quality) {
 
 // ===== LCD Display =====
 void update_lcd(const SensorData& data) {
+  if (!lcd_found) return;
   lcd.clear();
   lcd.setCursor(0, 0);
   lcd.print("CO2:");
@@ -605,14 +607,33 @@ void setup() {
   // Khởi động cảm biến DHT11
   dht.begin();
   
-  // Khởi động I2C và màn hình LCD (SDA=GPIO8, SCL=GPIO9)
+  // Khởi động I2C chuẩn cho ESP32 WROOM (SDA=GPIO21, SCL=GPIO22)
   Wire.begin(I2C_SDA, I2C_SCL);
-  lcd.init();
-  lcd.backlight();
-  lcd.setCursor(0, 0);
-  lcd.print("CEMS Node Ready");
-  lcd.setCursor(0, 1);
-  lcd.print("Init system...");
+  Wire.setTimeOut(100); // Tránh kẹt bus I2C nếu thiết bị không phản hồi
+
+  // Quét kiểm tra sự hiện diện của LCD 1602 (0x27 hoặc 0x3F)
+  Wire.beginTransmission(0x27);
+  if (Wire.endTransmission() == 0) {
+    lcd_found = true;
+    Serial.println("[LCD] Phat hien man hinh LCD 1602 tai dia chi 0x27.");
+  } else {
+    Wire.beginTransmission(0x3F);
+    if (Wire.endTransmission() == 0) {
+      lcd_found = true;
+      Serial.println("[LCD] Phat hien man hinh LCD tai dia chi 0x3F.");
+    }
+  }
+
+  if (lcd_found) {
+    lcd.init();
+    lcd.backlight();
+    lcd.setCursor(0, 0);
+    lcd.print("CEMS Node Ready");
+    lcd.setCursor(0, 1);
+    lcd.print("Init system...");
+  } else {
+    Serial.println("[LCD] [WARN] Khong tim thay LCD 1602 tren bus I2C (0x27/0x3F). Khoi dong che do khong man hinh (headless).");
+  }
   
   fill_history();
   mqtt.setServer(MQTT_HOST, MQTT_PORT);
@@ -621,8 +642,10 @@ void setup() {
   wifi_ok = connect_wifi();
   if (!wifi_ok) {
     Serial.println("[BOOT] WiFi failed, halting");
-    lcd.setCursor(0, 1);
-    lcd.print("WiFi: FAILED   ");
+    if (lcd_found) {
+      lcd.setCursor(0, 1);
+      lcd.print("WiFi: FAILED   ");
+    }
     return;
   }
 
