@@ -2,9 +2,9 @@
 ## Hướng 1 — Bên phát thải (Nhà máy / Doanh nghiệp) — Pione Carbon Credit
 
 - **Tác giả**: IoT Engineering Team & Systems Architect
-- **Phiên bản tài liệu**: `1.2.3-draft`
+- **Phiên bản tài liệu**: `1.2.3`
 - **Ngày cập nhật**: 2026-09-18
-- **Trạng thái**: Draft Technical Specification (Đang rà soát hoàn thiện kỹ thuật chuyên sâu)
+- **Trạng thái**: Validated Technical Specification — Sẵn sàng bàn giao Backend & Triển khai Pilot
 
 ---
 
