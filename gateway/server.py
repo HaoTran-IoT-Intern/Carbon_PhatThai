@@ -77,7 +77,7 @@ def receive_batch():
 
     # 2. Check JSON payload (400 Bad Request)
     payload = request.get_json(silent=True)
-    if not payload:
+    if not payload or not isinstance(payload, dict):
         return jsonify({"status": "error", "message": "Missing or invalid JSON"}), 400
 
     batch_id = payload.get("batch_id")

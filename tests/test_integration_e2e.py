@@ -159,19 +159,24 @@ def test_test3_conflict_409_quarantine(env):
 def test_test4_atomic_rollback_on_500(env):
     conn, config, _ = env
     cur = conn.cursor()
-    minute_ts = "2026-09-18T08:00:00.000Z"
-    ingest_raw_sample(conn, {
-        "device_id": "node_01", "boot_id": "b1", "sample_seq": 2,
-        "stack_id": "stack_01", "measurement_config_id": "cfg_cement_stack_v1",
-        "sample_ts": minute_ts, "raw_payload_text": "sample_2"
-    }, config)
-    recompute_minute_rollup(conn, "stack_01", minute_ts, config)
     
-    mock_freeze_dt = datetime.fromisoformat("2026-09-18T08:05:00.000+00:00")
-    b_id = freeze_and_create_batch(conn, "stack_01", "gw_01", limit=1, current_time_dt=mock_freeze_dt)
+    # Tạo batch 5 phút gồm 5 bản ghi 1-phút (từ 08:00 đến 08:04)
+    for m in range(5):
+        m_ts = f"2026-09-18T08:0{m}:00.000Z"
+        ingest_raw_sample(conn, {
+            "device_id": "node_01", "boot_id": "b1", "sample_seq": 20 + m,
+            "stack_id": "stack_01", "measurement_config_id": "cfg_cement_stack_v1",
+            "sample_ts": m_ts, "raw_payload_text": f"sample_2_{m}"
+        }, config)
+        recompute_minute_rollup(conn, "stack_01", m_ts, config)
+    
+    mock_freeze_dt = datetime.fromisoformat("2026-09-18T08:10:00.000+00:00")
+    b_id = freeze_and_create_batch(conn, "stack_01", "gw_01", limit=5, current_time_dt=mock_freeze_dt)
     assert b_id is not None
+    cur.execute("SELECT readings_count FROM batches WHERE batch_id = ?", (b_id,))
+    assert cur.fetchone()[0] == 5
     
-    # 1. Mock 500
+    # 1. Mock 500: Server giả lập lỗi chung
     mock_http = MagicMock()
     mock_resp = MagicMock()
     mock_resp.status_code = 500
@@ -183,7 +188,7 @@ def test_test4_atomic_rollback_on_500(env):
     cur.execute("SELECT status FROM batches WHERE batch_id = ?", (b_id,))
     assert cur.fetchone()[0] == "pending"
 
-    # 2. Live Server 500 Rollback: Giả lập lỗi DB trong quá trình xử lý reading -> Atomic Rollback
+    # 2. Live Server Mid-Batch Rollback: Lỗi DB xảy ra tại bản ghi thứ 3 trong 5 bản ghi (index 2)
     live_config = dict(config)
     live_config["api_key"] = "cems_gw_secret_key_prod_xxxxxxxxx"
     server_client = FlaskTestClientAdapter(app.test_client())
@@ -191,15 +196,36 @@ def test_test4_atomic_rollback_on_500(env):
     cur.execute("DELETE FROM gateway_system_state WHERE key = 'dispatcher_cooldown_until'")
     cur.execute("UPDATE batches SET next_retry_at = NULL WHERE batch_id = ?", (b_id,))
     
-    app.config["SIMULATE_DB_ERROR"] = True
+    # Cấu hình server kích hoạt lỗi DB ở bản ghi thứ 3 (index 2) sau khi đã insert 2 bản ghi đầu
+    app.config["SIMULATE_FAIL_ON_READING_INDEX"] = 2
     try:
         res_live_500 = dispatch_single_batch(conn, server_client, live_config, pacing_seconds=0)
         assert res_live_500["status"] == "transient_error"
-        # Xác nhận toàn bộ transaction bị rollback: Không bản ghi nào lưu vào readings_db
+        # Xác nhận toàn bộ transaction bị rollback: 2 bản ghi đầu bị xóa khỏi DB, 0 bản ghi lưu lại
         assert len(readings_db) == 0
         assert b_id not in batch_db
+        
+        # Gateway giữ nguyên batch ở trạng thái pending và ghi nhận mã lỗi 500
+        cur.execute("SELECT status, last_http_code FROM batches WHERE batch_id = ?", (b_id,))
+        st, code = cur.fetchone()
+        assert st == "pending"
+        assert code == 500
+        
+        # Gateway kích hoạt cooldown toàn trạm
+        cur.execute("SELECT value FROM gateway_system_state WHERE key = 'dispatcher_cooldown_until'")
+        assert cur.fetchone()[0] is not None
     finally:
-        app.config["SIMULATE_DB_ERROR"] = False
+        app.config["SIMULATE_FAIL_ON_READING_INDEX"] = None
+
+    # 3. Kiểm tra kiểm soát Schema: Gửi payload gốc không phải dict (ví dụ: list) trả về 400 Bad Request
+    client = app.test_client()
+    resp_list_root = client.post(
+        "/api/v1/cems/telemetry/batch",
+        headers={"Content-Type": "application/json", "X-API-Key": "cems_gw_secret_key_prod_xxxxxxxxx"},
+        data="[1, 2, 3]"
+    )
+    assert resp_list_root.status_code == 400
+    assert resp_list_root.get_json()["status"] == "error"
 
 
 # ==============================================================================
