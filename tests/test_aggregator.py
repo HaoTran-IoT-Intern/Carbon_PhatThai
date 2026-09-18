@@ -233,3 +233,91 @@ def test_recompute_minute_rollup_idempotent_update(db_conn):
     assert r2["received_samples"] == 2
     assert r2["valid_samples"] == 2
     assert r2["covered_seconds"] == 20
+
+def test_qaqc_out_of_control_and_sensor_fault_excluded(db_conn):
+    config = {"config_id": "cfg_test"}
+    minute_ts = "2026-09-18T15:00:00.000Z"
+
+    # Sample 1: Normal valid
+    s1 = {
+        "device_id": "dev_01", "boot_id": "b1", "sample_seq": 601,
+        "stack_id": "stack_06", "measurement_config_id": "cfg_test",
+        "sample_ts": "2026-09-18T15:00:00.000Z", "time_quality": "ntp_synced",
+        "co2_pct": 14.0, "so2_ppm": 80.0, "nox_ppm": 120.0, "co_ppm": 35.0, "o2_pct": 18.0, "pm_mgm3": 12.0,
+        "flue_temp_c": 150.0, "flue_pressure_gauge_kpa": 1.0, "flue_flow_m3h": 2000.0,
+        "ambient_temp_c": 28.0, "ambient_humidity_pct": 65.0,
+        "qaqc_status": "in_control", "is_calibrating": 0,
+        "metric_quality_json": "{}", "raw_payload_text": "p601"
+    }
+
+    # Sample 2: QA/QC out_of_control (must be excluded from co2_valid_samples and count in qaqc_failed_samples)
+    s2 = {
+        "device_id": "dev_01", "boot_id": "b1", "sample_seq": 602,
+        "stack_id": "stack_06", "measurement_config_id": "cfg_test",
+        "sample_ts": "2026-09-18T15:00:10.000Z", "time_quality": "ntp_synced",
+        "co2_pct": 16.0, "so2_ppm": 85.0, "nox_ppm": 125.0, "co_ppm": 36.0, "o2_pct": 17.5, "pm_mgm3": 13.0,
+        "flue_temp_c": 152.0, "flue_pressure_gauge_kpa": 1.1, "flue_flow_m3h": 2050.0,
+        "ambient_temp_c": 28.5, "ambient_humidity_pct": 64.0,
+        "qaqc_status": "out_of_control", "is_calibrating": 0,
+        "metric_quality_json": "{}", "raw_payload_text": "p602"
+    }
+
+    # Sample 3: Calibrating (must be excluded from co2_valid_samples and count in calibrating_samples)
+    s3 = {
+        "device_id": "dev_01", "boot_id": "b1", "sample_seq": 603,
+        "stack_id": "stack_06", "measurement_config_id": "cfg_test",
+        "sample_ts": "2026-09-18T15:00:20.000Z", "time_quality": "ntp_synced",
+        "co2_pct": 15.0, "so2_ppm": 82.0, "nox_ppm": 122.0, "co_ppm": 34.0, "o2_pct": 18.2, "pm_mgm3": 11.0,
+        "flue_temp_c": 149.0, "flue_pressure_gauge_kpa": 1.0, "flue_flow_m3h": 2000.0,
+        "ambient_temp_c": 28.2, "ambient_humidity_pct": 65.0,
+        "qaqc_status": "in_control", "is_calibrating": 1,
+        "metric_quality_json": "{}", "raw_payload_text": "p603"
+    }
+
+    # Sample 4: Sensor fault on SO2 (-999.0 or metric_quality sensor_fault)
+    s4 = {
+        "device_id": "dev_01", "boot_id": "b1", "sample_seq": 604,
+        "stack_id": "stack_06", "measurement_config_id": "cfg_test",
+        "sample_ts": "2026-09-18T15:00:30.000Z", "time_quality": "ntp_synced",
+        "co2_pct": 14.5, "so2_ppm": -999.0, "nox_ppm": 121.0, "co_ppm": 35.0, "o2_pct": 18.0, "pm_mgm3": 12.0,
+        "flue_temp_c": 150.0, "flue_pressure_gauge_kpa": 1.0, "flue_flow_m3h": 2000.0,
+        "ambient_temp_c": 28.0, "ambient_humidity_pct": 65.0,
+        "qaqc_status": "in_control", "is_calibrating": 0,
+        "metric_quality_json": json.dumps({"so2_ppm": "sensor_fault"}), "raw_payload_text": "p604"
+    }
+
+    for s in [s1, s2, s3, s4]:
+        ingest_raw_sample(db_conn, s, config)
+
+    recompute_minute_rollup(db_conn, "stack_06", minute_ts, config)
+
+    cur = db_conn.cursor()
+    cur.execute("SELECT * FROM minute_readings WHERE stack_id = 'stack_06' AND minute_ts = ?", (minute_ts,))
+    row = dict(cur.fetchone())
+
+    assert row["received_samples"] == 4
+    # Valid for CO2 integration: only s1 and s4 (s2 is out_of_control, s3 is calibrating)
+    assert row["valid_samples"] == 2
+    assert row["covered_seconds"] == 20
+
+    # Verify SO2 average does not include -999.0
+    gases = json.loads(row["gases_and_dust_json"])
+    assert gases["so2_ppm"]["min"] > 0
+    assert gases["so2_ppm"]["avg"] == pytest.approx((80.0 + 85.0 + 82.0) / 3, abs=0.1)
+
+    # Verify valid_by_metric_json has all 11 metrics
+    valid_metrics = json.loads(row["valid_by_metric_json"])
+    required_metrics = [
+        "co2_pct", "so2_ppm", "nox_ppm", "co_ppm", "o2_pct", "pm_mgm3",
+        "flue_temp_c", "flue_pressure_abs_kpa", "flue_flow_m3h", "ambient_temp_c", "ambient_humidity_pct"
+    ]
+    for m in required_metrics:
+        assert m in valid_metrics, f"Missing metric {m} in valid_by_metric"
+    assert valid_metrics["so2_ppm"] == 3  # 1 had sensor fault
+
+    # Verify excluded_by_reason_json
+    reasons = json.loads(row["excluded_by_reason_json"])
+    assert reasons["qaqc_failed_samples"] == 1
+    assert reasons["calibrating_samples"] == 1
+    assert reasons["sensor_fault_samples"] == 1
+

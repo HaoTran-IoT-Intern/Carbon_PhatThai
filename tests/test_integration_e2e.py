@@ -377,12 +377,14 @@ def test_test8_slot_collision_and_invalid_time(env):
         "device_id": "node_01", "boot_id": "b1", "sample_seq": 10,
         "stack_id": "stack_01", "measurement_config_id": "cfg_cement_stack_v1",
         "sample_ts": "2026-09-18T05:00:02.000Z", "time_quality": "gateway_assigned",
+        "arrived_at": "2026-09-18T05:00:03.000Z",
         "raw_payload_text": "s_gw"
     }
     sample_ntp = {
         "device_id": "node_01", "boot_id": "b2", "sample_seq": 1,
         "stack_id": "stack_01", "measurement_config_id": "cfg_cement_stack_v1",
         "sample_ts": "2026-09-18T05:00:05.000Z", "time_quality": "ntp_synced",
+        "arrived_at": "2026-09-18T05:00:05.500Z",
         "raw_payload_text": "s_ntp"
     }
     ingest_raw_sample(conn, sample_gw, config)
@@ -538,3 +540,63 @@ def test_test11_emergency_freeze_hysteresis():
     # Tăng lên 8.5% -> Phục hồi NORMAL (> 8%)
     state = evaluate_emergency_freeze(8.5, state)
     assert state == "NORMAL"
+
+
+def test_mock_server_strict_validation():
+    from gateway.server import app, VALID_API_KEY
+    client = app.test_client()
+    headers = {"X-API-Key": VALID_API_KEY}
+
+    # 1. Missing or non-dict JSON body
+    resp = client.post("/api/v1/cems/telemetry/batch", headers=headers, data="")
+    assert resp.status_code == 400
+    assert "error" in resp.get_json()["status"]
+
+    # 2. Invalid schema_version
+    bad_ver = {
+        "schema_version": "1.0.0",
+        "batch_id": "b1",
+        "gateway_id": "gw_01",
+        "batch_created_at": "2026-09-18T10:00:00.000Z",
+        "readings": [{"stack_id": "s1"}]
+    }
+    resp = client.post("/api/v1/cems/telemetry/batch", headers=headers, json=bad_ver)
+    assert resp.status_code == 400
+    assert "schema_version" in resp.get_json()["message"]
+
+    # 3. Empty readings list
+    empty_readings = {
+        "schema_version": "1.2.3",
+        "batch_id": "b1",
+        "gateway_id": "gw_01",
+        "batch_created_at": "2026-09-18T10:00:00.000Z",
+        "readings": []
+    }
+    resp = client.post("/api/v1/cems/telemetry/batch", headers=headers, json=empty_readings)
+    assert resp.status_code == 400
+    assert "Readings count" in resp.get_json()["message"]
+
+    # 4. Missing required field in reading (missing 'samples')
+    incomplete_reading = {
+        "schema_version": "1.2.3",
+        "batch_id": "b1",
+        "gateway_id": "gw_01",
+        "batch_created_at": "2026-09-18T10:00:00.000Z",
+        "readings": [{
+            "stack_id": "stack_01",
+            "device_id": "dev_01",
+            "measurement_config_id": "cfg_01",
+            "ts": "2026-09-18T10:00:00.000Z",
+            "window_seconds": 60,
+            # 'samples' missing!
+            "gases_and_dust": {},
+            "flue_gas": {},
+            "ambient": {},
+            "integrated_emissions": {},
+            "qaqc": {}
+        }]
+    }
+    resp = client.post("/api/v1/cems/telemetry/batch", headers=headers, json=incomplete_reading)
+    assert resp.status_code == 400
+    assert "missing required field" in resp.get_json()["message"].lower()
+

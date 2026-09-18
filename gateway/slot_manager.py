@@ -44,9 +44,15 @@ def compare_slot_priority(sample_a, sample_b):
         return 1 if a_arr < b_arr else -1
     return 0
 
-def ingest_raw_sample(conn, raw_data, config=None):
+def ingest_raw_sample(conn, raw_data, config=None, current_time=None):
     config = config or {}
     now_str = get_iso_now()
+    if current_time is not None:
+        if isinstance(current_time, str):
+            now_str = current_time
+        elif isinstance(current_time, datetime):
+            now_str = current_time.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+
     arrived_at_str = raw_data.get("arrived_at") or now_str
     
     with db_transaction(conn):

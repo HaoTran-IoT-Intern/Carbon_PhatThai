@@ -78,12 +78,39 @@ def receive_batch():
     # 2. Check JSON payload (400 Bad Request)
     payload = request.get_json(silent=True)
     if not payload or not isinstance(payload, dict):
-        return jsonify({"status": "error", "message": "Missing or invalid JSON"}), 400
+        return jsonify({"status": "error", "message": "Missing or invalid JSON body"}), 400
+
+    schema_version = payload.get("schema_version")
+    if schema_version != "1.2.3":
+        return jsonify({"status": "error", "message": f"Unsupported or invalid schema_version: {schema_version}. Expected '1.2.3'"}), 400
 
     batch_id = payload.get("batch_id")
-    readings = payload.get("readings", [])
-    if not batch_id or not isinstance(readings, list):
-        return jsonify({"status": "error", "message": "Invalid batch schema"}), 400
+    gateway_id = payload.get("gateway_id")
+    batch_created_at = payload.get("batch_created_at")
+    readings = payload.get("readings")
+
+    if not batch_id or not isinstance(batch_id, str):
+        return jsonify({"status": "error", "message": "batch_id must be a non-empty string"}), 400
+    if not gateway_id or not isinstance(gateway_id, str):
+        return jsonify({"status": "error", "message": "gateway_id must be a non-empty string"}), 400
+    if not batch_created_at or not isinstance(batch_created_at, str):
+        return jsonify({"status": "error", "message": "batch_created_at must be a non-empty string"}), 400
+    if not isinstance(readings, list) or len(readings) == 0 or len(readings) > 10:
+        return jsonify({"status": "error", "message": "Readings count must be between 1 and 10"}), 400
+
+    required_reading_fields = [
+        "stack_id", "device_id", "measurement_config_id", "ts",
+        "window_seconds", "samples", "gases_and_dust", "flue_gas",
+        "ambient", "integrated_emissions", "qaqc"
+    ]
+    for idx, r in enumerate(readings):
+        if not isinstance(r, dict):
+            return jsonify({"status": "error", "message": f"Reading #{idx+1} is not a valid JSON object"}), 400
+        for f in required_reading_fields:
+            if f not in r or r[f] is None:
+                return jsonify({"status": "error", "message": f"Reading #{idx+1} missing required field: {f}"}), 400
+        if not isinstance(r["samples"], dict) or "valid_by_metric" not in r["samples"] or "excluded_by_reason" not in r["samples"]:
+            return jsonify({"status": "error", "message": f"Reading #{idx+1} has invalid samples schema"}), 400
 
     # 3. Check Stack Authorization (403 Forbidden)
     allowed_stacks = app.config.get("ALLOWED_STACKS")

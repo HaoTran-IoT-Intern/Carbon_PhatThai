@@ -23,10 +23,40 @@ def recompute_minute_rollup(conn, stack_id, minute_ts, config=None):
         
         received_count = len(samples)
         
+        # Parse metric_quality_json for each sample
+        for s in samples:
+            mq_raw = s.get("metric_quality_json")
+            if mq_raw and isinstance(mq_raw, str):
+                try:
+                    s["_parsed_mq"] = json.loads(mq_raw)
+                except Exception:
+                    s["_parsed_mq"] = {}
+            elif isinstance(mq_raw, dict):
+                s["_parsed_mq"] = mq_raw
+            else:
+                s["_parsed_mq"] = {}
+
+        def is_metric_valid(s, key):
+            val = s.get(key)
+            if val is None:
+                return False
+            if isinstance(val, (int, float)) and val <= -900.0:
+                return False
+            mq = s.get("_parsed_mq", {})
+            if mq.get(key) in ("sensor_fault", "fault", "invalid"):
+                return False
+            return True
+
         # 1. Thống kê theo slot & độ phủ CO2
+        # Yêu cầu: Không lấy mẫu out_of_control, không lấy mẫu đang hiệu chuẩn, và đủ 4 đại lượng cốt lõi
         co2_valid_samples = []
         for s in samples:
-            if all(s.get(k) is not None for k in ("co2_pct", "flue_flow_m3h", "flue_temp_c", "flue_pressure_abs_kpa")) and s.get("is_calibrating") == 0:
+            if (s.get("qaqc_status") != "out_of_control" and
+                s.get("is_calibrating", 0) == 0 and
+                is_metric_valid(s, "co2_pct") and
+                is_metric_valid(s, "flue_flow_m3h") and
+                is_metric_valid(s, "flue_temp_c") and
+                is_metric_valid(s, "flue_pressure_abs_kpa")):
                 co2_valid_samples.append(s)
                 
         covered_seconds = len(co2_valid_samples) * 10
@@ -37,9 +67,9 @@ def recompute_minute_rollup(conn, stack_id, minute_ts, config=None):
         else:
             coverage_status = "none"
             
-        # 2. Thống kê đại lượng đo (avg, min, max)
-        def calc_stat(keys):
-            vals = [s[keys] for s in samples if s.get(keys) is not None]
+        # 2. Thống kê đại lượng đo (avg, min, max) - loại bỏ mẫu lỗi
+        def calc_stat(key):
+            vals = [s[key] for s in samples if is_metric_valid(s, key)]
             if not vals:
                 return None
             return {"avg": round(sum(vals) / len(vals), 2), "min": round(min(vals), 2), "max": round(max(vals), 2), "data_source": "measured"}
@@ -52,10 +82,15 @@ def recompute_minute_rollup(conn, stack_id, minute_ts, config=None):
             "o2_pct": calc_stat("o2_pct"),
             "pm_mgm3": calc_stat("pm_mgm3")
         }
+        flue_press_abs = calc_stat("flue_pressure_abs_kpa")
+        if flue_press_abs:
+            flue_press_abs["pressure_type"] = "absolute"
+            flue_press_abs["barometric_source"] = "assumed_barometric_101.325kpa"
+
         flue = {
             "temp_c": calc_stat("flue_temp_c"),
             "pressure_gauge_kpa": calc_stat("flue_pressure_gauge_kpa"),
-            "pressure_abs_kpa": calc_stat("flue_pressure_abs_kpa"),
+            "pressure_abs_kpa": flue_press_abs,
             "flow_actual_m3h": calc_stat("flue_flow_m3h")
         }
         ambient = {
@@ -65,8 +100,8 @@ def recompute_minute_rollup(conn, stack_id, minute_ts, config=None):
 
         # 3. Tích phân CO2 trên co2_valid_samples
         if co2_valid_samples:
-            co2_flows = [s["instantaneous_co2_flow_m3h"] for s in co2_valid_samples if s["instantaneous_co2_flow_m3h"] is not None]
-            co2_vols = [s["instantaneous_co2_std_volume_m3"] for s in co2_valid_samples if s["instantaneous_co2_std_volume_m3"] is not None]
+            co2_flows = [s["instantaneous_co2_flow_m3h"] for s in co2_valid_samples if s.get("instantaneous_co2_flow_m3h") is not None]
+            co2_vols = [s["instantaneous_co2_std_volume_m3"] for s in co2_valid_samples if s.get("instantaneous_co2_std_volume_m3") is not None]
             integrated = {
                 "method": "fixed_10s_rectangular_v1",
                 "valid_samples": len(co2_valid_samples),
@@ -100,6 +135,45 @@ def recompute_minute_rollup(conn, stack_id, minute_ts, config=None):
         else:
             m_qaqc = "mixed"
 
+        # 5. valid_by_metric_json (đủ 11 metrics theo spec) & excluded_by_reason_json
+        all_metric_keys = [
+            ("co2_pct", "co2_pct"),
+            ("so2_ppm", "so2_ppm"),
+            ("nox_ppm", "nox_ppm"),
+            ("co_ppm", "co_ppm"),
+            ("o2_pct", "o2_pct"),
+            ("pm_mgm3", "pm_mgm3"),
+            ("flue_temp_c", "flue_temp_c"),
+            ("flue_pressure_abs_kpa", "flue_pressure_abs_kpa"),
+            ("flue_flow_m3h", "flue_flow_m3h"),
+            ("ambient_temp_c", "ambient_temp_c"),
+            ("ambient_humidity_pct", "ambient_humidity_pct")
+        ]
+        valid_by_metric = {
+            out_k: sum(1 for s in samples if is_metric_valid(s, field_k))
+            for out_k, field_k in all_metric_keys
+        }
+
+        qaqc_failed_count = sum(1 for s in samples if s.get("qaqc_status") == "out_of_control")
+        calibrating_count = sum(1 for s in samples if s.get("is_calibrating") == 1)
+
+        def sample_has_sensor_fault(s):
+            mq = s.get("_parsed_mq", {})
+            if any(status in ("sensor_fault", "fault", "invalid") for status in mq.values()):
+                return True
+            for _, field_k in all_metric_keys:
+                val = s.get(field_k)
+                if val is not None and isinstance(val, (int, float)) and val <= -900.0:
+                    return True
+            return False
+
+        sensor_fault_count = sum(1 for s in samples if sample_has_sensor_fault(s))
+        excluded_by_reason = {
+            "sensor_fault_samples": sensor_fault_count,
+            "calibrating_samples": calibrating_count,
+            "qaqc_failed_samples": qaqc_failed_count
+        }
+
         device_id = samples[0]["device_id"] if samples else "unknown"
         config_id = config.get("config_id", (samples[0]["measurement_config_id"] if samples and samples[0].get("measurement_config_id") else "cfg_cement_stack_v1"))
         
@@ -128,8 +202,8 @@ def recompute_minute_rollup(conn, stack_id, minute_ts, config=None):
         """, (
             stack_id, device_id, config_id, minute_ts,
             received_count, len(co2_valid_samples), covered_seconds, coverage_status,
-            json.dumps({"co2_pct": len(co2_valid_samples)}),
-            json.dumps({"sensor_fault_samples": received_count - len(co2_valid_samples)}),
+            json.dumps(valid_by_metric),
+            json.dumps(excluded_by_reason),
             json.dumps(gases), json.dumps(flue), json.dumps(ambient), json.dumps(integrated),
             m_qaqc, json.dumps({"zero_drift_pct": 0.85, "span_drift_pct": 1.2}), now_str
         ))
@@ -138,6 +212,36 @@ def startup_gap_backfill(conn, config, current_time_dt=None):
     now_dt = current_time_dt or datetime.now(timezone.utc)
     total_backfilled = 0
     
+    empty_gases = json.dumps({
+        "co2_pct": {"avg": None, "min": None, "max": None, "data_source": "none"},
+        "so2_ppm": {"avg": None, "min": None, "max": None, "data_source": "none"},
+        "nox_ppm": {"avg": None, "min": None, "max": None, "data_source": "none"},
+        "co_ppm":  {"avg": None, "min": None, "max": None, "data_source": "none"},
+        "o2_pct":  {"avg": None, "min": None, "max": None, "data_source": "none"},
+        "pm_mgm3": {"avg": None, "min": None, "max": None, "data_source": "none"}
+    })
+    empty_flue = json.dumps({
+        "temp_c": {"avg": None, "min": None, "max": None, "data_source": "none"},
+        "pressure_abs_kpa": {"avg": None, "min": None, "max": None, "pressure_type": "absolute", "data_source": "none"},
+        "flow_actual_m3h": {"avg": None, "min": None, "max": None, "data_source": "none"}
+    })
+    empty_ambient = json.dumps({
+        "temp_c": {"avg": None, "min": None, "max": None, "data_source": "none"},
+        "humidity_pct": {"avg": None, "min": None, "max": None, "data_source": "none"}
+    })
+    empty_integrated = json.dumps({
+        "method": "fixed_10s_rectangular_v1", "valid_samples": 0, "covered_seconds": 0,
+        "coverage_status": "none", "co2_flow_actual_m3h": {"avg": None, "min": None, "max": None},
+        "co2_standard_volume_observed_m3": None
+    })
+    empty_valid_metric = json.dumps({
+        "co2_pct": 0, "so2_ppm": 0, "nox_ppm": 0, "co_ppm": 0, "o2_pct": 0, "pm_mgm3": 0,
+        "flue_temp_c": 0, "flue_pressure_abs_kpa": 0, "flue_flow_m3h": 0, "ambient_temp_c": 0, "ambient_humidity_pct": 0
+    })
+    empty_excluded_reason = json.dumps({
+        "sensor_fault_samples": 0, "calibrating_samples": 0, "qaqc_failed_samples": 0
+    })
+
     with db_transaction(conn):
         cur = conn.cursor()
         for stack in config.get("operational_stacks", []):
@@ -183,9 +287,11 @@ def startup_gap_backfill(conn, config, current_time_dt=None):
                         stack_id, device_id, measurement_config_id, minute_ts, window_seconds, gap_reason,
                         expected_samples, received_samples, valid_samples, covered_seconds,
                         coverage_status, valid_by_metric_json, excluded_by_reason_json,
+                        gases_and_dust_json, flue_gas_json, ambient_json, integrated_emissions_json,
                         minute_qaqc_status, qaqc_checks_json, status, created_at
-                    ) VALUES (?, ?, ?, ?, 60, 'gateway_offline_backfill', 6, 0, 0, 0, 'none', '{}', '{}', 'unknown', '{}', 'draft', ?)
-                """, (stack_id, stack["device_id"], config.get("config_id", "cfg_cement_stack_v1"), minute_ts_str, get_iso_now()))
+                    ) VALUES (?, ?, ?, ?, 60, 'gateway_offline_backfill', 6, 0, 0, 0, 'none', ?, ?, ?, ?, ?, ?, 'unknown', '{}', 'draft', ?)
+                """, (stack_id, stack.get("device_id", "unknown"), config.get("config_id", "cfg_cement_stack_v1"), minute_ts_str,
+                      empty_valid_metric, empty_excluded_reason, empty_gases, empty_flue, empty_ambient, empty_integrated, get_iso_now()))
                 if cur.rowcount > 0:
                     total_backfilled += 1
                 curr_dt += timedelta(minutes=1)

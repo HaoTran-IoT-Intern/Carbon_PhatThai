@@ -183,3 +183,16 @@ def dispatch_single_batch(conn, http_client, config, pacing_seconds=1.0):
         # F. 5xx / Network Error
         else:
             return handle_transient_error(conn, batch, status_code, json.dumps(resp_body)[:255], now_str)
+
+
+def dispatch_pending_batches(conn, config, session=None, max_batches=10, pacing_seconds=0.0):
+    """Lặp dispatch các lô đang chờ cho đến khi hết lô hoặc gặp lỗi cần hoãn."""
+    http_client = session or requests.Session()
+    results = []
+    for _ in range(max_batches):
+        res = dispatch_single_batch(conn, http_client, config, pacing_seconds=pacing_seconds)
+        results.append(res)
+        if res.get("status") in ("idle", "halted", "stack_suspended", "cooldown", "transient_error", "rate_limited"):
+            break
+    return results
+

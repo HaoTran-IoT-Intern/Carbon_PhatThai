@@ -262,6 +262,9 @@ def test_parse_json_field_type_safety():
     
     # Type mismatch: integer when default is dict
     assert _parse_json_field('123', {}) == {}
+    assert _parse_json_field('null', {}) == {}
+    assert _parse_json_field(None, {}) == {}
+    assert _parse_json_field({"valid": 1}, {}) == {"valid": 1}
     
     # Type mismatch: list when default is dict
     assert _parse_json_field('[1, 2]', {}) == {}
@@ -271,3 +274,56 @@ def test_parse_json_field_type_safety():
     
     # Object already passed in with mismatch
     assert _parse_json_field([1, 2, 3], {}) == {}
+
+def test_build_canonical_json_payload_gap_minute():
+    gap_row = {
+        "id": 99,
+        "stack_id": "stack_01",
+        "device_id": "node_01",
+        "measurement_config_id": "cfg_test",
+        "minute_ts": "2026-09-18T10:00:00.000Z",
+        "window_seconds": 60,
+        "gap_reason": "gateway_offline_backfill",
+        "expected_samples": 6,
+        "received_samples": 0,
+        "valid_by_metric_json": None,
+        "excluded_by_reason_json": None,
+        "gases_and_dust_json": None,
+        "flue_gas_json": None,
+        "ambient_json": None,
+        "integrated_emissions_json": None,
+        "minute_qaqc_status": "unknown",
+        "qaqc_checks_json": None
+    }
+
+    payload = build_canonical_json_payload("batch_gap_1", "gw_01", "2026-09-18T10:05:00.000Z", [gap_row])
+    reading = payload["readings"][0]
+
+    assert reading["gap_reason"] == "gateway_offline_backfill"
+    assert reading["samples"]["received"] == 0
+
+    # Ensure all 11 metrics exist in valid_by_metric with value 0
+    valid_metrics = reading["samples"]["valid_by_metric"]
+    assert len(valid_metrics) == 11
+    assert all(v == 0 for v in valid_metrics.values())
+
+    # Ensure excluded_by_reason has 3 keys with value 0
+    excluded = reading["samples"]["excluded_by_reason"]
+    assert excluded["sensor_fault_samples"] == 0
+    assert excluded["calibrating_samples"] == 0
+    assert excluded["qaqc_failed_samples"] == 0
+
+    # Ensure gases_and_dust contains null metrics with data_source 'none'
+    gases = reading["gases_and_dust"]
+    for k in ("co2_pct", "so2_ppm", "nox_ppm", "co_ppm", "o2_pct", "pm_mgm3"):
+        assert k in gases
+        assert gases[k]["avg"] is None
+        assert gases[k]["data_source"] == "none"
+
+    # Ensure flue_gas contains null metrics with data_source 'none'
+    flue = reading["flue_gas"]
+    for k in ("temp_c", "pressure_abs_kpa", "flow_actual_m3h"):
+        assert k in flue
+        assert flue[k]["avg"] is None
+        assert flue[k]["data_source"] == "none"
+

@@ -175,3 +175,66 @@ def test_check_disk_watermark():
         assert check_disk_watermark(".") == "CRITICAL"
     with patch("shutil.disk_usage", return_value=(-10, 0, 0)):
         assert check_disk_watermark(".") == "CRITICAL"
+
+def test_emergency_freeze_runtime_controller_and_log(tmp_path):
+    from gateway.retention import run_emergency_freeze_check, MosquittoServiceController
+    
+    db_path = str(tmp_path / "test_freeze.db")
+    init_db(db_path)
+    conn = get_db_connection(db_path)
+    log_file = str(tmp_path / "cems_emergency_freeze.log")
+
+    class MockServiceController(MosquittoServiceController):
+        def __init__(self):
+            self.stopped_calls = 0
+            self.started_calls = 0
+            self.is_running = True
+
+        def stop_service(self, service_name="mosquitto"):
+            self.stopped_calls += 1
+            self.is_running = False
+
+        def start_service(self, service_name="mosquitto"):
+            self.started_calls += 1
+            self.is_running = True
+
+    ctrl = MockServiceController()
+
+    # 1. Ban đầu đĩa đầy (< 5%, e.g. 3% free) -> Kích hoạt FREEZE
+    with patch("shutil.disk_usage", return_value=(100 * 1024**3, 97 * 1024**3, 3 * 1024**3)):
+        res1 = run_emergency_freeze_check(conn, disk_path=".", service_controller=ctrl, log_file=log_file)
+        assert res1["status"] == "DISK_EMERGENCY_FREEZE"
+        assert res1["state_changed"] is True
+        assert ctrl.stopped_calls == 1
+        assert ctrl.is_running is False
+
+    # Kiểm tra database gateway_system_state
+    cur = conn.cursor()
+    cur.execute("SELECT value FROM gateway_system_state WHERE key = 'emergency_freeze_state'")
+    assert cur.fetchone()["value"] == "DISK_EMERGENCY_FREEZE"
+
+    # Kiểm tra file log
+    with open(log_file, "r") as f:
+        log_content = f.read()
+        assert "EMERGENCY_FREEZE" in log_content
+
+    # 2. Đĩa tăng lên 7% (vẫn <= 8% Hysteresis) -> Giữ nguyên FREEZE, không gọi start
+    with patch("shutil.disk_usage", return_value=(100 * 1024**3, 93 * 1024**3, 7 * 1024**3)):
+        res2 = run_emergency_freeze_check(conn, disk_path=".", service_controller=ctrl, log_file=log_file)
+        assert res2["status"] == "DISK_EMERGENCY_FREEZE"
+        assert res2["state_changed"] is False
+        assert ctrl.started_calls == 0
+
+    # 3. Đĩa tăng lên 15% (> 8% và > 500MB) -> Phục hồi NORMAL, gọi start
+    with patch("shutil.disk_usage", return_value=(100 * 1024**3, 85 * 1024**3, 15 * 1024**3)):
+        res3 = run_emergency_freeze_check(conn, disk_path=".", service_controller=ctrl, log_file=log_file)
+        assert res3["status"] == "NORMAL"
+        assert res3["state_changed"] is True
+        assert ctrl.started_calls == 1
+        assert ctrl.is_running is True
+
+    cur.execute("SELECT value FROM gateway_system_state WHERE key = 'emergency_freeze_state'")
+    assert cur.fetchone()["value"] == "NORMAL"
+
+    conn.close()
+
