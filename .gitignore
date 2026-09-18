@@ -22,3 +22,6 @@ worktrees/
 env/
 venv/
 ENV/
+
+# OS files
+.DS_Store
