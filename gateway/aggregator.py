@@ -1,6 +1,7 @@
 # gateway/aggregator.py
 import json
-from datetime import datetime, timezone
+import logging
+from datetime import datetime, timezone, timedelta
 from gateway.models import db_transaction
 
 def get_iso_now():
@@ -132,3 +133,60 @@ def recompute_minute_rollup(conn, stack_id, minute_ts, config=None):
             json.dumps(gases), json.dumps(flue), json.dumps(ambient), json.dumps(integrated),
             m_qaqc, json.dumps({"zero_drift_pct": 0.85, "span_drift_pct": 1.2}), now_str
         ))
+
+def startup_gap_backfill(conn, config, current_time_dt=None):
+    now_dt = current_time_dt or datetime.now(timezone.utc)
+    total_backfilled = 0
+    
+    with db_transaction(conn):
+        cur = conn.cursor()
+        for stack in config.get("operational_stacks", []):
+            if not stack.get("is_active"):
+                continue
+            stack_id = stack["stack_id"]
+            
+            cur.execute("SELECT max(minute_ts) as last_ts FROM minute_readings WHERE stack_id = ?", (stack_id,))
+            row = cur.fetchone()
+            last_ts = None
+            if row:
+                try:
+                    last_ts = row["last_ts"]
+                except (TypeError, IndexError):
+                    last_ts = row[0]
+
+            if last_ts:
+                start_dt = datetime.fromisoformat(last_ts.replace("Z", "+00:00")) + timedelta(minutes=1)
+            elif stack.get("active_from"):
+                start_dt = datetime.fromisoformat(stack["active_from"].replace("Z", "+00:00"))
+            else:
+                start_dt = now_dt - timedelta(hours=24)
+                
+            active_until_dt = None
+            if stack.get("active_until"):
+                active_until_dt = datetime.fromisoformat(stack["active_until"].replace("Z", "+00:00"))
+                
+            effective_end_dt = min(now_dt, active_until_dt) if active_until_dt else now_dt
+            max_backfill_dt = effective_end_dt - timedelta(hours=24)
+            
+            if start_dt < max_backfill_dt:
+                logging.warning(f"[GAP_BACKFILL] Gap vượt quá 24h ({start_dt} -> {effective_end_dt}). Giới hạn bù đắp 24h.")
+                start_dt = max_backfill_dt
+                
+            cutoff_dt = effective_end_dt - timedelta(seconds=120)
+            
+            curr_dt = start_dt
+            while curr_dt <= cutoff_dt:
+                minute_ts_str = curr_dt.strftime("%Y-%m-%dT%H:%M:00.000Z")
+                cur.execute("""
+                    INSERT OR IGNORE INTO minute_readings (
+                        stack_id, device_id, measurement_config_id, minute_ts, window_seconds, gap_reason,
+                        expected_samples, received_samples, valid_samples, covered_seconds,
+                        coverage_status, valid_by_metric_json, excluded_by_reason_json,
+                        minute_qaqc_status, qaqc_checks_json, status, created_at
+                    ) VALUES (?, ?, ?, ?, 60, 'gateway_offline_backfill', 6, 0, 0, 0, 'none', '{}', '{}', 'unknown', '{}', 'draft', ?)
+                """, (stack_id, stack["device_id"], config.get("config_id", "cfg_cement_stack_v1"), minute_ts_str, get_iso_now()))
+                if cur.rowcount > 0:
+                    total_backfilled += 1
+                curr_dt += timedelta(minutes=1)
+                
+    return total_backfilled
