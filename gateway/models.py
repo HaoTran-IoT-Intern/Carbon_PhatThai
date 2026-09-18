@@ -9,6 +9,7 @@ def load_config(config_path="gateway/config.json"):
 
 def get_db_connection(db_path="gateway/cems_data.db"):
     conn = sqlite3.connect(db_path, timeout=30.0)
+    conn.isolation_level = None
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
