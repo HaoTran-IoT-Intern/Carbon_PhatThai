@@ -7,7 +7,7 @@
 #define DEFAULT_WIFI_TIMEOUT_MS 15000
 
 // MQTT Configuration (Local Edge Gateway Mosquitto Broker)
-#define DEFAULT_MQTT_HOST "192.168.1.100"
+#define DEFAULT_MQTT_HOST "192.168.80.37"
 #define DEFAULT_MQTT_PORT 1883
 #define DEFAULT_MQTT_USER "cems_node"
 #define DEFAULT_MQTT_PASS "cems_secret_pass"
