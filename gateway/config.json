@@ -27,5 +27,6 @@
       "is_active": true,
       "active_from": "2026-08-01T00:00:00.000Z"
     }
-  ]
+  ],
+  "database_path": "gateway/cems_data.db"
 }

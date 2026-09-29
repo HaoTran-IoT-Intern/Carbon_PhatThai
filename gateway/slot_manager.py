@@ -2,9 +2,7 @@
 import json
 from datetime import datetime, timezone, timedelta
 from gateway.models import db_transaction
-
-def get_iso_now():
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+from gateway.utils import get_iso_now
 
 def _to_dict(s):
     if isinstance(s, dict):

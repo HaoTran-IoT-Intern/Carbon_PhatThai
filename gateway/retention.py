@@ -64,19 +64,19 @@ class MosquittoServiceController:
         import subprocess
         self.command_executor = command_executor or subprocess.run
 
-    def stop_service(self, service_name="mosquitto"):
+    def stop_mosquitto(self):
         try:
-            self.command_executor(["systemctl", "stop", service_name], check=False)
+            self.command_executor(["systemctl", "stop", "mosquitto"], check=False)
         except Exception as e:
             import logging
-            logging.error(f"[SERVICE_CONTROLLER] Lỗi stop {service_name}: {e}")
+            logging.error(f"[SERVICE_CONTROLLER] Lỗi stop mosquitto: {e}")
 
-    def start_service(self, service_name="mosquitto"):
+    def start_mosquitto(self):
         try:
-            self.command_executor(["systemctl", "start", service_name], check=False)
+            self.command_executor(["systemctl", "start", "mosquitto"], check=False)
         except Exception as e:
             import logging
-            logging.error(f"[SERVICE_CONTROLLER] Lỗi start {service_name}: {e}")
+            logging.error(f"[SERVICE_CONTROLLER] Lỗi start mosquitto: {e}")
 
 
 def run_emergency_freeze_check(conn, disk_path=".", service_controller=None, log_file="/var/log/cems_emergency_freeze.log"):
@@ -118,11 +118,11 @@ def run_emergency_freeze_check(conn, disk_path=".", service_controller=None, log
         if new_state == "DISK_EMERGENCY_FREEZE":
             log_msg = f"[{now_iso}] EMERGENCY_FREEZE ACTIVATED: Free disk {free_pct:.2f}%, free bytes {free}. Stopped Mosquitto broker.\n"
             if service_controller:
-                service_controller.stop_service("mosquitto")
+                service_controller.stop_mosquitto()
         else:
             log_msg = f"[{now_iso}] EMERGENCY_FREEZE CLEARED: Free disk {free_pct:.2f}%, free bytes {free}. Restored Mosquitto broker.\n"
             if service_controller:
-                service_controller.start_service("mosquitto")
+                service_controller.start_mosquitto()
 
         # Ghi file log an toàn
         try:

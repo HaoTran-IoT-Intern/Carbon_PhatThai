@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """
-CEMS Mock Backend Cloud Server — Hướng 1 v2
+CEMS Mock Backend Cloud Server
 Implements API Contract Spec v1.2.3:
 - POST /api/v1/cems/telemetry/batch (Two-tier Idempotency SHA-256 + Unique Reading Key)
 - HTTP 200/400/401/403/409/429/500 responses
-- Backward compatible: POST /receive, GET /readings, GET /health
 """
 
 import json
@@ -19,17 +18,12 @@ VALID_API_KEY = "cems_gw_secret_key_prod_xxxxxxxxx"
 # In-memory storage for cloud simulation
 batch_db = {}
 readings_db = {}
-legacy_data_store = []
-legacy_received_count = 0
 
 
 def reset_mock_server_state():
     """Resets all backend in-memory data and simulation flags."""
-    global legacy_received_count
     batch_db.clear()
     readings_db.clear()
-    legacy_data_store.clear()
-    legacy_received_count = 0
     app.config["SIMULATE_DB_ERROR"] = False
     app.config["SIMULATE_RATE_LIMIT"] = False
     app.config["SIMULATE_FAIL_ON_READING_INDEX"] = None
@@ -189,69 +183,7 @@ def receive_batch():
         return jsonify({"status": "error", "message": f"Transaction error: {str(e)}"}), 500
 
 
-# ==============================================================================
-# Backward-Compatible Endpoints (POC v1/v2)
-# ==============================================================================
-@app.route('/receive', methods=['POST'])
-def receive():
-    global legacy_received_count
-    legacy_received_count += 1
-
-    payload = request.get_json(silent=True)
-    if not payload:
-        return jsonify({'status': 'error', 'message': 'No JSON payload'}), 400
-
-    record = {
-        'id': legacy_received_count,
-        'device_id': payload.get('device_id'),
-        'ts': payload.get('ts'),
-        'location': payload.get('location'),
-        'co2_pct': payload.get('co2_pct'),
-        'so2_ppm': payload.get('so2_ppm'),
-        'nox_ppm': payload.get('nox_ppm'),
-        'co_ppm': payload.get('co_ppm'),
-        'o2_pct': payload.get('o2_pct'),
-        'pm_mgm3': payload.get('pm_mgm3'),
-        'flow_m3h': payload.get('flow_m3h'),
-        'temp_c': payload.get('temp_c'),
-        'pressure_atm': payload.get('pressure_atm'),
-        'humidity_pct': payload.get('humidity_pct'),
-        'zero_drift_pct': payload.get('zero_drift_pct'),
-        'span_drift_pct': payload.get('span_drift_pct'),
-        'qaqc_status': payload.get('qaqc_status'),
-        'last_rata_date': payload.get('last_rata_date'),
-        'rata_accuracy_pct': payload.get('rata_accuracy_pct'),
-        'received_at': datetime.now(timezone.utc).isoformat()
-    }
-    legacy_data_store.append(record)
-    return jsonify({'status': 'ok', 'id': legacy_received_count})
-
-
-@app.route('/readings', methods=['GET'])
-def get_readings():
-    return jsonify({
-        'status': 'ok',
-        'count': len(legacy_data_store),
-        'data': legacy_data_store
-    })
-
-
-@app.route('/health', methods=['GET'])
-def health():
-    return jsonify({
-        'status': 'ok',
-        'services': ['mqtt-gateway', 'flask-server'],
-        'received_count': legacy_received_count,
-        'data_count': len(legacy_data_store),
-        'batch_count': len(batch_db),
-        'reading_count': len(readings_db)
-    })
-
-
 if __name__ == '__main__':
     print('[SERVER] Flask Server starting on http://0.0.0.0:5001')
     print('[SERVER] POST /api/v1/cems/telemetry/batch — CEMS Telemetry Batch Ingestion')
-    print('[SERVER] POST /receive — Legacy endpoint')
-    print('[SERVER] GET /readings — Legacy readings store')
-    print('[SERVER] GET /health — Health status')
     app.run(host='0.0.0.0', port=5001, debug=False)

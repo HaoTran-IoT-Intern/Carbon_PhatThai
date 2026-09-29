@@ -190,11 +190,11 @@ def test_emergency_freeze_runtime_controller_and_log(tmp_path):
             self.started_calls = 0
             self.is_running = True
 
-        def stop_service(self, service_name="mosquitto"):
+        def stop_mosquitto(self):
             self.stopped_calls += 1
             self.is_running = False
 
-        def start_service(self, service_name="mosquitto"):
+        def start_mosquitto(self):
             self.started_calls += 1
             self.is_running = True
 

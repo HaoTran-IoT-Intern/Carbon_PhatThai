@@ -246,7 +246,7 @@ def test_freeze_and_create_batch_atomic_rollback(tmp_path, monkeypatch):
     conn.close()
 
 def test_parse_json_field_type_safety():
-    from gateway.batch_manager import _parse_json_field
+    from gateway.utils import parse_json_field as _parse_json_field
     
     # Valid dict
     assert _parse_json_field('{"a": 1}', {}) == {"a": 1}

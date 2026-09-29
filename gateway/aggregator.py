@@ -3,9 +3,7 @@ import json
 import logging
 from datetime import datetime, timezone, timedelta
 from gateway.models import db_transaction
-
-def get_iso_now():
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+from gateway.utils import get_iso_now, DEFAULT_GASES, DEFAULT_FLUE, DEFAULT_AMBIENT, DEFAULT_VALID_BY_METRIC, DEFAULT_EXCLUDED_BY_REASON
 
 def recompute_minute_rollup(conn, stack_id, minute_ts, config=None):
     config = config or {}
@@ -212,35 +210,16 @@ def startup_gap_backfill(conn, config, current_time_dt=None):
     now_dt = current_time_dt or datetime.now(timezone.utc)
     total_backfilled = 0
     
-    empty_gases = json.dumps({
-        "co2_pct": {"avg": None, "min": None, "max": None, "data_source": "none"},
-        "so2_ppm": {"avg": None, "min": None, "max": None, "data_source": "none"},
-        "nox_ppm": {"avg": None, "min": None, "max": None, "data_source": "none"},
-        "co_ppm":  {"avg": None, "min": None, "max": None, "data_source": "none"},
-        "o2_pct":  {"avg": None, "min": None, "max": None, "data_source": "none"},
-        "pm_mgm3": {"avg": None, "min": None, "max": None, "data_source": "none"}
-    })
-    empty_flue = json.dumps({
-        "temp_c": {"avg": None, "min": None, "max": None, "data_source": "none"},
-        "pressure_abs_kpa": {"avg": None, "min": None, "max": None, "pressure_type": "absolute", "data_source": "none"},
-        "flow_actual_m3h": {"avg": None, "min": None, "max": None, "data_source": "none"}
-    })
-    empty_ambient = json.dumps({
-        "temp_c": {"avg": None, "min": None, "max": None, "data_source": "none"},
-        "humidity_pct": {"avg": None, "min": None, "max": None, "data_source": "none"}
-    })
+    empty_gases = json.dumps(DEFAULT_GASES)
+    empty_flue = json.dumps(DEFAULT_FLUE)
+    empty_ambient = json.dumps(DEFAULT_AMBIENT)
     empty_integrated = json.dumps({
         "method": "fixed_10s_rectangular_v1", "valid_samples": 0, "covered_seconds": 0,
         "coverage_status": "none", "co2_flow_actual_m3h": {"avg": None, "min": None, "max": None},
         "co2_standard_volume_observed_m3": None
     })
-    empty_valid_metric = json.dumps({
-        "co2_pct": 0, "so2_ppm": 0, "nox_ppm": 0, "co_ppm": 0, "o2_pct": 0, "pm_mgm3": 0,
-        "flue_temp_c": 0, "flue_pressure_abs_kpa": 0, "flue_flow_m3h": 0, "ambient_temp_c": 0, "ambient_humidity_pct": 0
-    })
-    empty_excluded_reason = json.dumps({
-        "sensor_fault_samples": 0, "calibrating_samples": 0, "qaqc_failed_samples": 0
-    })
+    empty_valid_metric = json.dumps(DEFAULT_VALID_BY_METRIC)
+    empty_excluded_reason = json.dumps(DEFAULT_EXCLUDED_BY_REASON)
 
     with db_transaction(conn):
         cur = conn.cursor()

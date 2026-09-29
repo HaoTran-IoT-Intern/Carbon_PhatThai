@@ -25,5 +25,23 @@ env/
 venv/
 ENV/
 
-# OS files
+# macOS
 .DS_Store
+
+# IDE
+.idea/
+.vscode/
+
+# Env
+.env
+
+# Build
+dist/
+build/
+*.egg-info/
+
+# Internal
+.docs/
+.agents/skills/
+.GEMINI.md
+.proposal_iot_carbon_credit_huong1_FINAL_v3.pdf

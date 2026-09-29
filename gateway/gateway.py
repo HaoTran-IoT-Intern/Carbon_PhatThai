@@ -258,7 +258,6 @@ def main():
     parser = argparse.ArgumentParser(description="CEMS Edge Gateway Production Daemon v1.2.3")
     parser.add_argument("--config", default="gateway/config.json", help="Path to configuration file")
     parser.add_argument("--once", action="store_true", help="Chạy một chu kỳ duy nhất rồi thoát (thử nghiệm/cron)")
-    parser.add_argument("--modbus", action="store_true", help="Chạy chế độ Modbus Adapter")
     args = parser.parse_args()
 
     daemon = GatewayDaemon(config_path=args.config)

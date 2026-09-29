@@ -26,6 +26,7 @@ def test_recompute_minute_rollup_full_slots(db_conn):
             "stack_id": "stack_01",
             "measurement_config_id": "cfg_test",
             "sample_ts": f"2026-09-18T10:00:{sec:02d}.000Z",
+            "arrived_at": f"2026-09-18T10:00:{sec:02d}.100Z",
             "time_quality": "ntp_synced",
             "co2_pct": 15.0,
             "flue_temp_c": 150.0,
@@ -84,6 +85,7 @@ def test_recompute_minute_rollup_partial_and_none_coverage(db_conn):
             "stack_id": "stack_01",
             "measurement_config_id": "cfg_test",
             "sample_ts": f"2026-09-18T10:00:{sec:02d}.000Z",
+            "arrived_at": f"2026-09-18T10:00:{sec:02d}.100Z",
             "time_quality": "ntp_synced",
             "co2_pct": 10.0,
             "flue_temp_c": 120.0,
@@ -116,6 +118,7 @@ def test_qaqc_precedence_independent_of_coverage(db_conn):
             "device_id": "dev_01", "boot_id": "b1", "sample_seq": 200 + (sec // 10),
             "stack_id": "stack_02", "measurement_config_id": "cfg_test",
             "sample_ts": f"2026-09-18T11:00:{sec:02d}.000Z",
+            "arrived_at": f"2026-09-18T11:00:{sec:02d}.100Z",
             "time_quality": "ntp_synced", "co2_pct": 12.0, "flue_temp_c": 100.0,
             "flue_pressure_gauge_kpa": 0.0, "flue_flow_m3h": 500.0,
             "qaqc_status": "out_of_control", "raw_payload_text": f"payload_ooc_{sec}"
@@ -131,6 +134,7 @@ def test_qaqc_precedence_independent_of_coverage(db_conn):
         "device_id": "dev_01", "boot_id": "b1", "sample_seq": 202,
         "stack_id": "stack_02", "measurement_config_id": "cfg_test",
         "sample_ts": "2026-09-18T11:00:20.000Z",
+        "arrived_at": "2026-09-18T11:00:20.100Z",
         "time_quality": "ntp_synced", "co2_pct": 12.0, "flue_temp_c": 100.0,
         "flue_pressure_gauge_kpa": 0.0, "flue_flow_m3h": 500.0,
         "qaqc_status": "in_control", "raw_payload_text": "payload_in_ctrl"
@@ -180,7 +184,9 @@ def test_calibrating_sample_excluded_from_co2_valid_samples(db_conn):
     sample = {
         "device_id": "dev_01", "boot_id": "b1", "sample_seq": 401,
         "stack_id": "stack_04", "measurement_config_id": "cfg_test",
-        "sample_ts": "2026-09-18T13:00:00.000Z", "time_quality": "ntp_synced",
+        "sample_ts": "2026-09-18T13:00:00.000Z",
+        "arrived_at": "2026-09-18T13:00:00.100Z",
+        "time_quality": "ntp_synced",
         "co2_pct": 15.0, "flue_temp_c": 100.0, "flue_pressure_gauge_kpa": 0.0, "flue_flow_m3h": 500.0,
         "qaqc_status": "in_control", "is_calibrating": 1, "raw_payload_text": "p401"
     }
@@ -203,7 +209,9 @@ def test_recompute_minute_rollup_idempotent_update(db_conn):
     s1 = {
         "device_id": "dev_01", "boot_id": "b1", "sample_seq": 501,
         "stack_id": "stack_05", "measurement_config_id": "cfg_test",
-        "sample_ts": "2026-09-18T14:00:00.000Z", "time_quality": "ntp_synced",
+        "sample_ts": "2026-09-18T14:00:00.000Z",
+        "arrived_at": "2026-09-18T14:00:00.100Z",
+        "time_quality": "ntp_synced",
         "co2_pct": 10.0, "flue_temp_c": 100.0, "flue_pressure_gauge_kpa": 0.0, "flue_flow_m3h": 500.0,
         "qaqc_status": "in_control", "raw_payload_text": "p501"
     }
@@ -220,7 +228,9 @@ def test_recompute_minute_rollup_idempotent_update(db_conn):
     s2 = {
         "device_id": "dev_01", "boot_id": "b1", "sample_seq": 502,
         "stack_id": "stack_05", "measurement_config_id": "cfg_test",
-        "sample_ts": "2026-09-18T14:00:10.000Z", "time_quality": "ntp_synced",
+        "sample_ts": "2026-09-18T14:00:10.000Z",
+        "arrived_at": "2026-09-18T14:00:10.100Z",
+        "time_quality": "ntp_synced",
         "co2_pct": 12.0, "flue_temp_c": 100.0, "flue_pressure_gauge_kpa": 0.0, "flue_flow_m3h": 500.0,
         "qaqc_status": "in_control", "raw_payload_text": "p502"
     }
@@ -242,7 +252,9 @@ def test_qaqc_out_of_control_and_sensor_fault_excluded(db_conn):
     s1 = {
         "device_id": "dev_01", "boot_id": "b1", "sample_seq": 601,
         "stack_id": "stack_06", "measurement_config_id": "cfg_test",
-        "sample_ts": "2026-09-18T15:00:00.000Z", "time_quality": "ntp_synced",
+        "sample_ts": "2026-09-18T15:00:00.000Z",
+        "arrived_at": "2026-09-18T15:00:00.100Z",
+        "time_quality": "ntp_synced",
         "co2_pct": 14.0, "so2_ppm": 80.0, "nox_ppm": 120.0, "co_ppm": 35.0, "o2_pct": 18.0, "pm_mgm3": 12.0,
         "flue_temp_c": 150.0, "flue_pressure_gauge_kpa": 1.0, "flue_flow_m3h": 2000.0,
         "ambient_temp_c": 28.0, "ambient_humidity_pct": 65.0,
@@ -254,7 +266,9 @@ def test_qaqc_out_of_control_and_sensor_fault_excluded(db_conn):
     s2 = {
         "device_id": "dev_01", "boot_id": "b1", "sample_seq": 602,
         "stack_id": "stack_06", "measurement_config_id": "cfg_test",
-        "sample_ts": "2026-09-18T15:00:10.000Z", "time_quality": "ntp_synced",
+        "sample_ts": "2026-09-18T15:00:10.000Z",
+        "arrived_at": "2026-09-18T15:00:10.100Z",
+        "time_quality": "ntp_synced",
         "co2_pct": 16.0, "so2_ppm": 85.0, "nox_ppm": 125.0, "co_ppm": 36.0, "o2_pct": 17.5, "pm_mgm3": 13.0,
         "flue_temp_c": 152.0, "flue_pressure_gauge_kpa": 1.1, "flue_flow_m3h": 2050.0,
         "ambient_temp_c": 28.5, "ambient_humidity_pct": 64.0,
@@ -266,7 +280,9 @@ def test_qaqc_out_of_control_and_sensor_fault_excluded(db_conn):
     s3 = {
         "device_id": "dev_01", "boot_id": "b1", "sample_seq": 603,
         "stack_id": "stack_06", "measurement_config_id": "cfg_test",
-        "sample_ts": "2026-09-18T15:00:20.000Z", "time_quality": "ntp_synced",
+        "sample_ts": "2026-09-18T15:00:20.000Z",
+        "arrived_at": "2026-09-18T15:00:20.100Z",
+        "time_quality": "ntp_synced",
         "co2_pct": 15.0, "so2_ppm": 82.0, "nox_ppm": 122.0, "co_ppm": 34.0, "o2_pct": 18.2, "pm_mgm3": 11.0,
         "flue_temp_c": 149.0, "flue_pressure_gauge_kpa": 1.0, "flue_flow_m3h": 2000.0,
         "ambient_temp_c": 28.2, "ambient_humidity_pct": 65.0,
@@ -278,7 +294,9 @@ def test_qaqc_out_of_control_and_sensor_fault_excluded(db_conn):
     s4 = {
         "device_id": "dev_01", "boot_id": "b1", "sample_seq": 604,
         "stack_id": "stack_06", "measurement_config_id": "cfg_test",
-        "sample_ts": "2026-09-18T15:00:30.000Z", "time_quality": "ntp_synced",
+        "sample_ts": "2026-09-18T15:00:30.000Z",
+        "arrived_at": "2026-09-18T15:00:30.100Z",
+        "time_quality": "ntp_synced",
         "co2_pct": 14.5, "so2_ppm": -999.0, "nox_ppm": 121.0, "co_ppm": 35.0, "o2_pct": 18.0, "pm_mgm3": 12.0,
         "flue_temp_c": 150.0, "flue_pressure_gauge_kpa": 1.0, "flue_flow_m3h": 2000.0,
         "ambient_temp_c": 28.0, "ambient_humidity_pct": 65.0,

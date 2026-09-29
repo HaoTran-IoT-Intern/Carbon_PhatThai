@@ -6,11 +6,9 @@ import random
 from datetime import datetime, timezone, timedelta
 from email.utils import parsedate_to_datetime
 from gateway.models import db_transaction
+from gateway.utils import get_iso_now
 
 logger = logging.getLogger(__name__)
-
-def get_iso_now():
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
 
 def parse_retry_after(header_val, default_sec=30):
     if not header_val:
